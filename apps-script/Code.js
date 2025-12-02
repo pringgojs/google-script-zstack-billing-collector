@@ -50,6 +50,9 @@ function collectBillingDaily() {
   var billingDate = Utilities.formatDate(today, "UTC", "yyyy-MM-dd");
   var rowsBatch = [];
 
+  // Ensure the destination BigQuery table exists with a proper schema
+  ensureBQTable(projectId, datasetId, tableId);
+
   // billing API expects epoch ms dateStart/dateEnd. Build for billingDate (UTC full day)
   var start = new Date(billingDate + "T00:00:00Z");
   var end = new Date(billingDate + "T23:59:59.999Z");
@@ -158,11 +161,144 @@ function insertRowsToBQ(projectId, datasetId, tableId, rows) {
   );
   if (resp.insertErrors && resp.insertErrors.length) {
     Logger.log("BigQuery insert errors: %s", JSON.stringify(resp.insertErrors));
+    // Try to fetch and log table schema for diagnosis
+    try {
+      var table = BigQuery.Tables.get(projectId, datasetId, tableId);
+      Logger.log("Table schema: %s", JSON.stringify(table.schema || {}));
+    } catch (e) {
+      Logger.log("Failed to fetch table schema: %s", e.toString());
+    }
     throw new Error(
       "BigQuery insertAll returned errors: " + JSON.stringify(resp.insertErrors)
     );
   }
   return resp;
+}
+
+/**
+ * Get and log BigQuery table schema for given identifiers.
+ */
+function getBQTableSchema(projectId, datasetId, tableId) {
+  try {
+    var table = BigQuery.Tables.get(projectId, datasetId, tableId);
+    Logger.log(
+      "Table %s.%s.%s schema: %s",
+      projectId,
+      datasetId,
+      tableId,
+      JSON.stringify(table.schema || {})
+    );
+    return table.schema || null;
+  } catch (e) {
+    Logger.log("getBQTableSchema error: %s", e.toString());
+    throw e;
+  }
+}
+
+/**
+ * Test inserting a single sample row into configured BQ table.
+ * Use Script Properties: BQ_PROJECT, BQ_DATASET, BQ_TABLE
+ */
+function testInsertToBQ() {
+  var props = PropertiesService.getScriptProperties();
+  var projectId = props.getProperty("BQ_PROJECT") || "";
+  var datasetId = props.getProperty("BQ_DATASET") || "";
+  var tableId = props.getProperty("BQ_TABLE") || "";
+  if (!projectId || !datasetId || !tableId)
+    throw new Error(
+      "Set BQ_PROJECT, BQ_DATASET, BQ_TABLE in Script Properties"
+    );
+
+  // Ensure table exists
+  ensureBQTable(projectId, datasetId, tableId);
+
+  // Log current schema
+  try {
+    getBQTableSchema(projectId, datasetId, tableId);
+  } catch (e) {
+    Logger.log(
+      "Could not retrieve schema before test insert: %s",
+      e.toString()
+    );
+  }
+
+  var sampleRow = [
+    {
+      json: {
+        billing_date: Utilities.formatDate(new Date(), "UTC", "yyyy-MM-dd"),
+        account_id: "test-account",
+        resource_id: "test-resource",
+        resource_name: "test-resource-name",
+        spending_type: "VM",
+        resource_type: "VM",
+        cost: 0.01,
+        date_start_ms: Date.now(),
+        date_end_ms: Date.now(),
+        raw_json: JSON.stringify({ test: true }),
+        collected_at: new Date().toISOString(),
+      },
+    },
+  ];
+
+  try {
+    var res = insertRowsToBQ(projectId, datasetId, tableId, sampleRow);
+    Logger.log("testInsertToBQ result: %s", JSON.stringify(res));
+    return res;
+  } catch (e) {
+    Logger.log("testInsertToBQ failed: %s", e.toString());
+    throw e;
+  }
+}
+
+/**
+ * Ensure BigQuery table exists with a schema; create it if missing.
+ */
+function ensureBQTable(projectId, datasetId, tableId) {
+  try {
+    BigQuery.Tables.get(projectId, datasetId, tableId);
+    return;
+  } catch (e) {
+    // If not found, create table with recommended schema
+    Logger.log(
+      "Table %s.%s.%s not found, creating...",
+      projectId,
+      datasetId,
+      tableId
+    );
+    var tableResource = {
+      tableReference: {
+        projectId: projectId,
+        datasetId: datasetId,
+        tableId: tableId,
+      },
+      friendlyName: "ZStack billing daily",
+      description: "Daily billing rows imported from ZStack",
+      schema: {
+        fields: [
+          { name: "billing_date", type: "DATE" },
+          { name: "account_id", type: "STRING" },
+          { name: "resource_id", type: "STRING" },
+          { name: "resource_name", type: "STRING" },
+          { name: "spending_type", type: "STRING" },
+          { name: "resource_type", type: "STRING" },
+          { name: "cost", type: "FLOAT" },
+          { name: "date_start_ms", type: "INTEGER" },
+          { name: "date_end_ms", type: "INTEGER" },
+          { name: "raw_json", type: "STRING" },
+          { name: "collected_at", type: "TIMESTAMP" },
+        ],
+      },
+      timePartitioning: { type: "DAY", field: "billing_date" },
+    };
+
+    try {
+      BigQuery.Tables.insert(tableResource, projectId, datasetId);
+      Logger.log("Created table %s.%s.%s", projectId, datasetId, tableId);
+    } catch (err) {
+      Logger.log("Failed to create table: %s", err.toString());
+      throw err;
+    }
+  }
 }
 
 /**
@@ -194,27 +330,30 @@ function loginZstack(apiUrl, username, password) {
       return null;
     }
     var obj = JSON.parse(resp.getContentText());
-    // Attempt to extract both a token (session uuid) and an account UUID
+
+    // Prefer inventory.uuid as session token and inventory.accountUuid as account identifier
     var token = null;
     var accountUuid = null;
 
-    if (typeof obj === "string") {
-      token = obj;
-    } else {
-      if (obj.uuid) token = obj.uuid;
+    if (obj && typeof obj === "object") {
+      if (obj.inventory) {
+        if (obj.inventory.uuid) token = obj.inventory.uuid;
+        if (obj.inventory.accountUuid) accountUuid = obj.inventory.accountUuid;
+        if (!accountUuid && obj.inventory.userUuid)
+          accountUuid = obj.inventory.userUuid;
+      }
+
+      // other fallbacks
+      if (!token && obj.uuid) token = obj.uuid;
       if (!token && obj.session)
         token =
           typeof obj.session === "string"
             ? obj.session
             : obj.session.uuid || null;
       if (!token && obj.value && obj.value.uuid) token = obj.value.uuid;
-
-      if (obj.inventory && obj.inventory.uuid) accountUuid = obj.inventory.uuid;
-      if (!accountUuid && obj.account && obj.account.uuid)
-        accountUuid = obj.account.uuid;
       if (!accountUuid && obj.accountUuid) accountUuid = obj.accountUuid;
 
-      // fallback: recursively search for first 32-hex uuid-like string
+      // recursive search fallback for first uuid-like string
       function findUuid(o) {
         if (!o) return null;
         if (typeof o === "string") {
@@ -233,10 +372,17 @@ function loginZstack(apiUrl, username, password) {
         return null;
       }
 
-      if (!accountUuid) accountUuid = findUuid(obj);
       if (!token) token = findUuid(obj);
+      if (!accountUuid) accountUuid = findUuid(obj);
+    } else if (typeof obj === "string") {
+      token = obj;
     }
 
+    Logger.log(
+      "loginZstack parsed token=%s accountUuid=%s",
+      token,
+      accountUuid
+    );
     return {
       token: token || null,
       accountUuid: accountUuid || null,
