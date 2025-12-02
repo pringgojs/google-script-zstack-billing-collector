@@ -153,26 +153,76 @@ function collectBillingDaily() {
 
 function insertRowsToBQ(projectId, datasetId, tableId, rows) {
   var insertAllRequest = { rows: rows };
-  var resp = BigQuery.Tabledata.insertAll(
-    insertAllRequest,
-    projectId,
-    datasetId,
-    tableId
-  );
-  if (resp.insertErrors && resp.insertErrors.length) {
-    Logger.log("BigQuery insert errors: %s", JSON.stringify(resp.insertErrors));
-    // Try to fetch and log table schema for diagnosis
+  var maxRetries = 3;
+  var attempt = 0;
+  var lastErr = null;
+  while (attempt < maxRetries) {
+    attempt++;
     try {
-      var table = BigQuery.Tables.get(projectId, datasetId, tableId);
-      Logger.log("Table schema: %s", JSON.stringify(table.schema || {}));
+      var resp = BigQuery.Tabledata.insertAll(
+        insertAllRequest,
+        projectId,
+        datasetId,
+        tableId
+      );
+      if (resp.insertErrors && resp.insertErrors.length) {
+        Logger.log(
+          "BigQuery insert errors (attempt %s): %s",
+          attempt,
+          JSON.stringify(resp.insertErrors)
+        );
+        lastErr = new Error(
+          "BigQuery insertAll returned errors: " +
+            JSON.stringify(resp.insertErrors)
+        );
+        // if schema related, fetch schema for diagnosis and retry
+        try {
+          var table = BigQuery.Tables.get(projectId, datasetId, tableId);
+          Logger.log("Table schema: %s", JSON.stringify(table.schema || {}));
+        } catch (e) {
+          Logger.log("Failed to fetch table schema: %s", e.toString());
+        }
+        // if final attempt, throw
+        if (attempt >= maxRetries) throw lastErr;
+        Utilities.sleep(3000);
+        continue;
+      }
+      // success
+      return resp;
     } catch (e) {
-      Logger.log("Failed to fetch table schema: %s", e.toString());
+      lastErr = e;
+      var msg = e && e.message ? e.message : e.toString ? e.toString() : "";
+      Logger.log("insertRowsToBQ attempt %s failed: %s", attempt, msg);
+      // if error mentions no schema or table not found, try to get schema and wait then retry
+      if (
+        /no schema/i.test(msg) ||
+        /Table .* has no schema/i.test(msg) ||
+        /destination table has no schema/i.test(msg) ||
+        /Table .* not found/i.test(msg) ||
+        /not found/i.test(msg)
+      ) {
+        try {
+          var table2 = BigQuery.Tables.get(projectId, datasetId, tableId);
+          Logger.log(
+            "Schema on retry: %s",
+            JSON.stringify(table2.schema || {})
+          );
+        } catch (e2) {
+          Logger.log(
+            "Failed to fetch table schema on retry: %s",
+            e2.toString()
+          );
+        }
+        if (attempt >= maxRetries) throw e;
+        Utilities.sleep(3000);
+        continue;
+      }
+      // non-retryable error
+      throw e;
     }
-    throw new Error(
-      "BigQuery insertAll returned errors: " + JSON.stringify(resp.insertErrors)
-    );
   }
-  return resp;
+  // if we exit loop, throw last error
+  throw lastErr;
 }
 
 /**
