@@ -1,0 +1,112 @@
+{
+  "total": 6569.274665950215,
+  "spending": [
+    {
+      "spendingType": "dataVolume",
+      "spending": 3789.9967688530824,
+      "hypervisorTypeSpending": {
+        "KVM": 3789.9967688530824
+      },
+      "dateStart": 1762717200000,
+      "dateEnd": 1762803599000,
+      "details": [
+        {
+          "sizeInventory": [
+            {
+              "startTime": 1762758119925,
+              "endTime": 1762793987025,
+              "spending": 2989.0,
+              "volumeSize": 21474836480
+            },
+            {
+              "startTime": 1762793987042,
+              "endTime": 1762803599000,
+              "spending": 800.9967688530821,
+              "volumeSize": 21474836480
+            }
+          ],
+          "resourceUuid": "e5047af013db49a58d62c34e544c560b",
+          "resourceName": "DATA-for-tesVM",
+          "spending": 3789.9967688530824,
+          "hypervisorType": "KVM",
+          "type": "dataVolume"
+        }
+      ]
+    },
+    {
+      "spendingType": "VM",
+      "spending": 252.6661068191982,
+      "hypervisorTypeSpending": {
+        "KVM": 252.6661068191982
+      },
+      "dateStart": 1762717200000,
+      "dateEnd": 1762803599000,
+      "details": [
+        {
+          "cpuInventory": [
+            {
+              "startTime": 1762758119965,
+              "endTime": 1762793987082,
+              "spending": 119.56
+            },
+            {
+              "startTime": 1762793987105,
+              "endTime": 1762803599000,
+              "spending": 32.03966409151893
+            }
+          ],
+          "memoryInventory": [
+            {
+              "startTime": 1762758119965,
+              "endTime": 1762793987082,
+              "spending": 79.70666666666666
+            },
+            {
+              "startTime": 1762793987105,
+              "endTime": 1762803599000,
+              "spending": 21.35977606101262
+            }
+          ],
+          "resourceUuid": "1d83187cffe44bcd92068d87402dbaa1",
+          "resourceName": "tesVM",
+          "spending": 252.6661068191982,
+          "hypervisorType": "KVM",
+          "type": "VM"
+        }
+      ]
+    },
+    {
+      "spendingType": "rootVolume",
+      "spending": 2526.611790277935,
+      "hypervisorTypeSpending": {
+        "KVM": 2526.611790277935
+      },
+      "dateStart": 1762717200000,
+      "dateEnd": 1762803599000,
+      "details": [
+        {
+          "sizeInventory": [
+            {
+              "startTime": 1762758119895,
+              "endTime": 1762793986970,
+              "spending": 1992.6111111111113,
+              "volumeSize": 21474836480
+            },
+            {
+              "startTime": 1762793986990,
+              "endTime": 1762803599000,
+              "spending": 534.0006791668238,
+              "volumeSize": 21474836480
+            }
+          ],
+          "resourceUuid": "bcdd17649b024a81aaabe2bc81c03cf9",
+          "resourceName": "ROOT-for-tesVM",
+          "spending": 2526.611790277935,
+          "hypervisorType": "KVM",
+          "type": "rootVolume"
+        }
+      ]
+    }
+  ],
+  "success": true
+}
