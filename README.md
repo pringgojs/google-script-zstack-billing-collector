@@ -80,6 +80,12 @@ clasp run --function collectBillingDaily
 
 # run for a specific date (backfill)
 clasp run --function "collectBillingForDate" --params "['2025-12-02']"
+
+# Test single month (November 2025)
+clasp run --function "collectBillingForMonth" --params "['2025-11']"
+
+# Test previous month
+clasp run --function collectBillingForPreviousMonth
 ```
 
 **Permissions note**

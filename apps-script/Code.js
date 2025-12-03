@@ -150,6 +150,80 @@ function collectBillingForDate(dateStr) {
 }
 
 /**
+ * Collect billing for every day in a given month.
+ * Parameter format: "YYYY-MM" (e.g. "2025-11").
+ * This is intended for testing/backfill and will call `collectBillingForDate` for each day.
+ */
+function collectBillingForMonth(yearMonth) {
+  if (!yearMonth || !/^\d{4}-\d{2}$/.test(yearMonth)) {
+    throw new Error("yearMonth must be provided in YYYY-MM format");
+  }
+  var parts = yearMonth.split("-");
+  var y = Number(parts[0]);
+  var m = Number(parts[1]);
+  if (isNaN(y) || isNaN(m) || m < 1 || m > 12) {
+    throw new Error("Invalid yearMonth");
+  }
+
+  // Determine number of days in month
+  var lastDay = new Date(y, m, 0).getDate();
+  var results = [];
+  for (var d = 1; d <= lastDay; d++) {
+    var dt = new Date(Date.UTC(y, m - 1, d));
+    var dateStr = Utilities.formatDate(dt, "UTC", "yyyy-MM-dd");
+    Logger.log("Collecting billing for %s", dateStr);
+    try {
+      var res = collectBillingForDate(dateStr);
+      results.push({ date: dateStr, ok: true, res: res });
+    } catch (e) {
+      Logger.log(
+        "collectBillingForDate failed for %s: %s",
+        dateStr,
+        e.toString()
+      );
+      results.push({ date: dateStr, ok: false, error: e.toString() });
+    }
+    // Small sleep to avoid hitting rate limits
+    Utilities.sleep(1000);
+  }
+  return results;
+}
+
+/**
+ * Helper: collect billing for the previous month (useful for quick tests).
+ */
+function collectBillingForPreviousMonth() {
+  var now = new Date();
+  // move to first day of this month, then go back one day to get last day of previous month
+  var firstOfThisMonth = new Date(
+    Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)
+  );
+  var lastOfPrev = new Date(firstOfThisMonth.getTime() - 24 * 60 * 60 * 1000);
+  var ym = Utilities.formatDate(lastOfPrev, "UTC", "yyyy-MM");
+  return collectBillingForMonth(ym);
+}
+
+/**
+ * Runner helpers to avoid passing complex JSON params from PowerShell/CLI.
+ * - `runCollectBillingForMonthStatic` calls `collectBillingForMonth` with a hard-coded example.
+ * - `runCollectBillingForMonthFromProperty` reads `COLLECT_TEST_MONTH` Script Property (YYYY-MM) and runs it.
+ */
+function runCollectBillingForMonthStatic() {
+  // Change this value for testing different months without using --params
+  return collectBillingForMonth("2025-11");
+}
+
+function runCollectBillingForMonthFromProperty() {
+  var props = PropertiesService.getScriptProperties();
+  var ym = props.getProperty("COLLECT_TEST_MONTH");
+  if (!ym)
+    throw new Error(
+      "Set Script Property COLLECT_TEST_MONTH to YYYY-MM (e.g. 2025-11)"
+    );
+  return collectBillingForMonth(ym);
+}
+
+/**
  * Replace rows in BigQuery for a given billing_date: DELETE then INSERT.
  */
 function replaceRowsForDate(projectId, datasetId, tableId, billingDate, rows) {
