@@ -8,9 +8,14 @@
 function collectBillingDaily() {
   var today = new Date();
   var yesterday = new Date(today.getTime() - 24 * 60 * 60 * 1000);
-  var billingDate = Utilities.formatDate(yesterday, "UTC", "yyyy-MM-dd");
+  // Use Asia/Jakarta (UTC+7) as requested
+  var TZ = "Asia/Jakarta";
+  var billingDate = Utilities.formatDate(yesterday, TZ, "yyyy-MM-dd");
   return collectBillingForDate(billingDate);
 }
+
+// In-memory cache to avoid repeated login requests within the same execution
+var ZSTACK_CACHE = { token: null, accountUuid: null, fetchedAtSec: 0 };
 
 /**
  * Collect billing for a specific date string (YYYY-MM-DD).
@@ -64,10 +69,21 @@ function collectBillingForDate(dateStr) {
 
   ensureBQTable(projectId, datasetId, tableId);
 
-  var start = new Date(billingDate + "T00:00:00Z");
-  var end = new Date(billingDate + "T23:59:59.999Z");
+  // Build start/end at midnight in UTC+7 (Asia/Jakarta) and use epoch milliseconds (13 digits)
+  var start = new Date(billingDate + "T00:00:00.000+07:00");
+  var end = new Date(billingDate + "T23:59:59.999+07:00");
   var dateStartMs = start.getTime();
   var dateEndMs = end.getTime();
+  // Ensure integers (avoid any float/scientific notation)
+  dateStartMs = parseInt(dateStartMs, 10);
+  dateEndMs = parseInt(dateEndMs, 10);
+  // Log epoch start/end (milliseconds) for diagnostics
+  Logger.log(
+    "Billing date %s -> dateStart=%s dateEnd=%s (epoch ms)",
+    billingDate,
+    String(dateStartMs),
+    String(dateEndMs)
+  );
 
   if (!accountUuid) {
     throw new Error("Missing ZSTACK_ACCOUNT_UUID in Script Properties");
@@ -91,11 +107,26 @@ function collectBillingForDate(dateStr) {
     }
   }
 
+  // ZStack expects milliseconds since epoch (integer) for this environment
   var body = {
-    calculateAccountSpending: { dateStart: dateStartMs, dateEnd: dateEndMs },
+    calculateAccountSpending: {
+      // ensure plain integer numbers (ms)
+      dateStart: dateStartMs,
+      dateEnd: dateEndMs,
+    },
     systemTags: [],
     userTags: [],
   };
+  // Log payload with explicit string conversion for large numbers to avoid scientific notation in logs
+  var bodyForLog = {
+    calculateAccountSpending: {
+      dateStart: String(dateStartMs),
+      dateEnd: String(dateEndMs),
+    },
+    systemTags: [],
+    userTags: [],
+  };
+  Logger.log("Request payload: %s", JSON.stringify(bodyForLog));
 
   var options = {
     method: "put",
@@ -115,8 +146,10 @@ function collectBillingForDate(dateStr) {
   var spending = payload.spending || [];
   spending.forEach(function (sp) {
     var spendingType = sp.spendingType || "";
-    var dateStart = sp.dateStart || dateStartMs;
-    var dateEnd = sp.dateEnd || dateEndMs;
+    // ZStack returns dateStart/dateEnd in seconds; fall back to our computed seconds
+    // ZStack returns dateStart/dateEnd in milliseconds (ms) for this setup; fall back to our computed ms
+    var dateStart = parseInt(sp.dateStart || dateStartMs, 10);
+    var dateEnd = parseInt(sp.dateEnd || dateEndMs, 10);
     var details = sp.details || [];
     details.forEach(function (detail) {
       var resourceId = detail.resourceUuid || "";
@@ -169,8 +202,10 @@ function collectBillingForMonth(yearMonth) {
   var lastDay = new Date(y, m, 0).getDate();
   var results = [];
   for (var d = 1; d <= lastDay; d++) {
-    var dt = new Date(Date.UTC(y, m - 1, d));
-    var dateStr = Utilities.formatDate(dt, "UTC", "yyyy-MM-dd");
+    // Build YYYY-MM-DD directly so it represents the calendar day in Asia/Jakarta
+    var mm = m < 10 ? "0" + m : "" + m;
+    var dd = d < 10 ? "0" + d : "" + d;
+    var dateStr = y + "-" + mm + "-" + dd;
     Logger.log("Collecting billing for %s", dateStr);
     try {
       var res = collectBillingForDate(dateStr);
@@ -199,7 +234,8 @@ function collectBillingForPreviousMonth() {
     Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)
   );
   var lastOfPrev = new Date(firstOfThisMonth.getTime() - 24 * 60 * 60 * 1000);
-  var ym = Utilities.formatDate(lastOfPrev, "UTC", "yyyy-MM");
+  // Use Asia/Jakarta (UTC+7)
+  var ym = Utilities.formatDate(lastOfPrev, "Asia/Jakarta", "yyyy-MM");
   return collectBillingForMonth(ym);
 }
 
@@ -494,11 +530,55 @@ function ensureBQTable(projectId, datasetId, tableId) {
  */
 function loginZstack(apiUrl, username, password) {
   try {
+    var props = PropertiesService.getScriptProperties();
     var loginPath =
-      PropertiesService.getScriptProperties().getProperty(
-        "ZSTACK_LOGIN_PATH"
-      ) || "/zstack/v1/accounts/login";
+      props.getProperty("ZSTACK_LOGIN_PATH") || "/zstack/v1/accounts/login";
     var url = apiUrl.replace(/\/$/, "") + loginPath;
+
+    // TTL for cached token in seconds (script property optional), default 24h
+    var ttl = parseInt(
+      props.getProperty("ZSTACK_TOKEN_TTL_SEC") || "86400",
+      10
+    );
+    var nowSec = Math.floor(Date.now() / 1000);
+
+    // Return in-memory cached token if present and fresh
+    if (
+      ZSTACK_CACHE &&
+      ZSTACK_CACHE.token &&
+      nowSec - ZSTACK_CACHE.fetchedAtSec < ttl
+    ) {
+      return {
+        token: ZSTACK_CACHE.token,
+        accountUuid: ZSTACK_CACHE.accountUuid,
+        uuid: ZSTACK_CACHE.token,
+      };
+    }
+
+    // Check Script Properties cache
+    var cachedToken = props.getProperty("ZSTACK_CACHED_TOKEN");
+    var cachedTs = parseInt(
+      props.getProperty("ZSTACK_CACHED_TOKEN_TS") || "0",
+      10
+    );
+    var cachedAccount = props.getProperty("ZSTACK_CACHED_ACCOUNT_UUID") || null;
+    if (cachedToken && cachedTs && nowSec - cachedTs < ttl) {
+      // populate in-memory cache and return
+      ZSTACK_CACHE.token = cachedToken;
+      ZSTACK_CACHE.accountUuid = cachedAccount;
+      ZSTACK_CACHE.fetchedAtSec = cachedTs;
+      Logger.log(
+        "loginZstack using cached token (props) age=%s sec",
+        nowSec - cachedTs
+      );
+      return {
+        token: cachedToken,
+        accountUuid: cachedAccount,
+        uuid: cachedToken,
+      };
+    }
+
+    // perform login
     var hashed = sha512Hex(password);
     var payload = {
       logInByAccount: { accountName: username, password: hashed },
@@ -520,7 +600,6 @@ function loginZstack(apiUrl, username, password) {
     // Prefer inventory.uuid as session token and inventory.accountUuid as account identifier
     var token = null;
     var accountUuid = null;
-
     if (obj && typeof obj === "object") {
       if (obj.inventory) {
         if (obj.inventory.uuid) token = obj.inventory.uuid;
@@ -528,8 +607,6 @@ function loginZstack(apiUrl, username, password) {
         if (!accountUuid && obj.inventory.userUuid)
           accountUuid = obj.inventory.userUuid;
       }
-
-      // other fallbacks
       if (!token && obj.uuid) token = obj.uuid;
       if (!token && obj.session)
         token =
@@ -539,7 +616,6 @@ function loginZstack(apiUrl, username, password) {
       if (!token && obj.value && obj.value.uuid) token = obj.value.uuid;
       if (!accountUuid && obj.accountUuid) accountUuid = obj.accountUuid;
 
-      // recursive search fallback for first uuid-like string
       function findUuid(o) {
         if (!o) return null;
         if (typeof o === "string") {
@@ -557,11 +633,28 @@ function loginZstack(apiUrl, username, password) {
         }
         return null;
       }
-
       if (!token) token = findUuid(obj);
       if (!accountUuid) accountUuid = findUuid(obj);
     } else if (typeof obj === "string") {
       token = obj;
+    }
+
+    // cache to in-memory and Script Properties
+    if (token) {
+      ZSTACK_CACHE.token = token;
+      ZSTACK_CACHE.accountUuid = accountUuid || null;
+      ZSTACK_CACHE.fetchedAtSec = nowSec;
+      try {
+        props.setProperty("ZSTACK_CACHED_TOKEN", token);
+        props.setProperty("ZSTACK_CACHED_TOKEN_TS", String(nowSec));
+        if (accountUuid)
+          props.setProperty("ZSTACK_CACHED_ACCOUNT_UUID", accountUuid);
+      } catch (e) {
+        Logger.log(
+          "Warning: failed to persist cached token in ScriptProperties: %s",
+          e.toString()
+        );
+      }
     }
 
     Logger.log(
