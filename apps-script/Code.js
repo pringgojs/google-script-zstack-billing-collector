@@ -6,6 +6,21 @@
  *  - Add OAuth scopes in appsscript.json
  */
 function collectBillingDaily() {
+  var today = new Date();
+  var yesterday = new Date(today.getTime() - 24 * 60 * 60 * 1000);
+  var billingDate = Utilities.formatDate(yesterday, "UTC", "yyyy-MM-dd");
+  return collectBillingForDate(billingDate);
+}
+
+/**
+ * Collect billing for a specific date string (YYYY-MM-DD).
+ * This is useful for manual backfills or testing.
+ */
+function collectBillingForDate(dateStr) {
+  if (!dateStr || typeof dateStr !== "string")
+    throw new Error("dateStr must be provided as YYYY-MM-DD");
+
+  // Copy of main logic but using provided date
   var props = PropertiesService.getScriptProperties();
   var apiUrl = props.getProperty("ZSTACK_API_URL") || "";
   var apiKey = props.getProperty("ZSTACK_API_KEY") || "";
@@ -13,7 +28,7 @@ function collectBillingDaily() {
   var accessSecret = props.getProperty("ZSTACK_ACCESS_SECRET") || "";
   var username = props.getProperty("ZSTACK_USERNAME") || "";
   var password = props.getProperty("ZSTACK_PASSWORD") || "";
-  var extraQuery = props.getProperty("ZSTACK_EXTRA_QUERY") || ""; // e.g. "Action=DescribeBilling&Version=2016-01-01"
+  var extraQuery = props.getProperty("ZSTACK_EXTRA_QUERY") || "";
   var projectId = props.getProperty("BQ_PROJECT") || "";
   var datasetId = props.getProperty("BQ_DATASET") || "";
   var tableId = props.getProperty("BQ_TABLE") || "";
@@ -21,13 +36,11 @@ function collectBillingDaily() {
   var billingPath =
     props.getProperty("ZSTACK_BILLING_PATH") || "/zstack/v1/billings/accounts";
 
-  // If username/password are provided, attempt login once to obtain session token and account UUID
   var sessionToken = "";
   if (username && password) {
     var loginRes = loginZstack(apiUrl, username, password);
     if (loginRes) {
       sessionToken = loginRes.token || loginRes.uuid || "";
-      // prefer accountUuid from login response when available
       if (loginRes.accountUuid)
         accountUuid = accountUuid || loginRes.accountUuid;
       if (loginRes.uuid && !accountUuid) accountUuid = loginRes.uuid;
@@ -46,52 +59,40 @@ function collectBillingDaily() {
     );
   }
 
-  var today = new Date();
-  var billingDate = Utilities.formatDate(today, "UTC", "yyyy-MM-dd");
+  var billingDate = dateStr;
   var rowsBatch = [];
 
-  // Ensure the destination BigQuery table exists with a proper schema
   ensureBQTable(projectId, datasetId, tableId);
 
-  // billing API expects epoch ms dateStart/dateEnd. Build for billingDate (UTC full day)
   var start = new Date(billingDate + "T00:00:00Z");
   var end = new Date(billingDate + "T23:59:59.999Z");
   var dateStartMs = start.getTime();
   var dateEndMs = end.getTime();
 
-  // build billing URL: {apiUrl}/{billingPath}/{accountUuid}/actions
   if (!accountUuid) {
     throw new Error("Missing ZSTACK_ACCOUNT_UUID in Script Properties");
   }
   var base = apiUrl.replace(/\/$/, "");
   var url = base + billingPath + "/" + accountUuid + "/actions";
-  if (extraQuery) {
-    url += (url.indexOf("?") === -1 ? "?" : "&") + extraQuery;
-  }
-  // Build auth headers: prefer API key (Bearer), otherwise use AccessKey/AccessSecret headers
+  if (extraQuery) url += (url.indexOf("?") === -1 ? "?" : "&") + extraQuery;
+
   var headers = {};
   if (apiKey) {
     headers.Authorization = "Bearer " + apiKey;
   } else if (accessKey && accessSecret) {
-    // Use custom headers expected by ZStack (adjust names if your ZStack expects different header names)
     headers["X-Access-Key"] = accessKey;
     headers["X-Access-Secret"] = accessSecret;
   } else if (username && password) {
-    // Use session token from earlier login if available
     if (sessionToken) {
       headers.Authorization = "OAuth " + sessionToken;
     } else {
-      // fallback to Basic header if login didn't return a token
       var basic = Utilities.base64Encode(username + ":" + password);
       headers.Authorization = "Basic " + basic;
     }
   }
 
   var body = {
-    calculateAccountSpending: {
-      dateStart: dateStartMs,
-      dateEnd: dateEndMs,
-    },
+    calculateAccountSpending: { dateStart: dateStartMs, dateEnd: dateEndMs },
     systemTags: [],
     userTags: [],
   };
@@ -111,8 +112,6 @@ function collectBillingDaily() {
   }
 
   var payload = JSON.parse(resp.getContentText());
-
-  // payload.spending is an array; iterate and convert to rows
   var spending = payload.spending || [];
   spending.forEach(function (sp) {
     var spendingType = sp.spendingType || "";
@@ -144,11 +143,74 @@ function collectBillingDaily() {
   });
 
   if (rowsBatch.length) {
-    insertRowsToBQ(projectId, datasetId, tableId, rowsBatch);
-    rowsBatch = [];
+    replaceRowsForDate(projectId, datasetId, tableId, billingDate, rowsBatch);
   }
 
-  return { status: "ok" };
+  return { status: "ok", date: billingDate };
+}
+
+/**
+ * Replace rows in BigQuery for a given billing_date: DELETE then INSERT.
+ */
+function replaceRowsForDate(projectId, datasetId, tableId, billingDate, rows) {
+  // Delete existing rows for that date first
+  try {
+    deleteRowsForDate(projectId, datasetId, tableId, billingDate);
+  } catch (e) {
+    Logger.log("deleteRowsForDate warning: %s", e.toString());
+    // continue to attempt insert even if delete failed; user should inspect permissions
+  }
+
+  // Insert new rows
+  return insertRowsToBQ(projectId, datasetId, tableId, rows);
+}
+
+/**
+ * Run a BigQuery DELETE query to remove rows for billing_date.
+ */
+function deleteRowsForDate(projectId, datasetId, tableId, billingDate) {
+  var sql =
+    "DELETE FROM `" +
+    projectId +
+    "." +
+    datasetId +
+    "." +
+    tableId +
+    "` WHERE billing_date = DATE '" +
+    billingDate +
+    "'";
+  Logger.log("Running delete query: %s", sql);
+  var req = { query: sql, useLegacySql: false };
+  var resp = BigQuery.Jobs.query(req, projectId);
+  if (resp && resp.errorResult) {
+    throw new Error(
+      "BigQuery delete error: " + JSON.stringify(resp.errorResult)
+    );
+  }
+  Logger.log("Delete job result: %s", JSON.stringify(resp || {}));
+  return resp;
+}
+
+/**
+ * Create triggers examples (call once from editor) — helper functions.
+ */
+function createHourlyTriggerAtTopOfHour() {
+  // Triggers run approximately on schedule; this creates a simple hourly trigger.
+  ScriptApp.newTrigger("collectBillingDaily")
+    .timeBased()
+    .everyHours(1)
+    .create();
+  return "Created hourly trigger (everyHours(1)).";
+}
+
+function createDailyMidnightTrigger() {
+  // Run every day at approximately 00:00 (UTC local) - Apps Script may vary by minutes.
+  ScriptApp.newTrigger("collectBillingDaily")
+    .timeBased()
+    .atHour(0)
+    .everyDays(1)
+    .create();
+  return "Created daily midnight trigger (atHour(0) everyDays(1)).";
 }
 
 function insertRowsToBQ(projectId, datasetId, tableId, rows) {

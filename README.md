@@ -56,3 +56,32 @@ clasp run --function testInsertToBQ
 - For large volumes consider using the GCS -> BigQuery load job pattern instead of streaming `insertAll` from Apps Script.
 
 If you want, I can add a `README-BQ-DDL.md` with a BigQuery `CREATE TABLE` DDL that matches the importer schema.
+
+**Scheduling & Idempotency**
+
+- The script now runs for _yesterday_ by default. Call `collectBillingDaily()` (or let the trigger run) and it will fetch the previous day's billing.
+- For manual or backfill runs, use `collectBillingForDate("YYYY-MM-DD")` to fetch and replace data for a particular date.
+- The importer implements "replace-by-date": before inserting new rows for a `billing_date` the script runs a `DELETE FROM 
+`project.dataset.table` WHERE billing_date = DATE 'YYYY-MM-DD'` then inserts the fresh rows. This ensures the date's partition is replaced with latest data.
+
+**Create triggers**
+
+- From Apps Script editor -> Triggers, create a time-driven trigger. Examples (call once from editor via Run):
+  - Hourly (top of hour approx): run `createHourlyTriggerAtTopOfHour()` in the script editor.
+  - Daily at midnight (approx): run `createDailyMidnightTrigger()` in the script editor.
+
+**Run examples (local with clasp)**
+
+```powershell
+cd d:\laragon-www\elitery\zstack-billing\apps-script
+clasp push
+# run for yesterday (default)
+clasp run --function collectBillingDaily
+
+# run for a specific date (backfill)
+clasp run --function "collectBillingForDate" --params "['2025-12-02']"
+```
+
+**Permissions note**
+
+- The account running Apps Script must have permission to run BigQuery jobs and modify data in the target dataset (for example `BigQuery Data Editor` and the ability to run `DELETE` queries). If you encounter errors when deleting/inserting, check IAM roles and the Apps Script execution logs.
