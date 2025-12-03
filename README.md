@@ -55,8 +55,6 @@ clasp run --function testInsertToBQ
 - Use `apps-script/.claspignore` to ensure `node_modules` and local test helpers are not pushed to Apps Script.
 - For large volumes consider using the GCS -> BigQuery load job pattern instead of streaming `insertAll` from Apps Script.
 
-If you want, I can add a `README-BQ-DDL.md` with a BigQuery `CREATE TABLE` DDL that matches the importer schema.
-
 **Scheduling & Idempotency**
 
 - The script now runs for _yesterday_ by default. Call `collectBillingDaily()` (or let the trigger run) and it will fetch the previous day's billing.
