@@ -155,23 +155,58 @@ function collectBillingForDate(dateStr) {
       var resourceId = detail.resourceUuid || "";
       var resourceName = detail.resourceName || "";
       var resourceType = detail.type || spendingType || "";
-      var cost = Number(detail.spending || detail.spending || 0);
-      var row = {
-        json: {
-          billing_date: billingDate,
-          account_id: accountUuid,
-          resource_id: resourceId,
-          resource_name: resourceName,
-          spending_type: spendingType,
-          resource_type: resourceType,
-          cost: cost,
-          date_start_ms: dateStart,
-          date_end_ms: dateEnd,
-          raw_json: JSON.stringify(detail),
-          collected_at: new Date().toISOString(),
-        },
-      };
-      rowsBatch.push(row);
+
+      // Look for inventory arrays (sizeInventory, cpuInventory, memoryInventory, etc.)
+      var inventoryKeys = Object.keys(detail).filter(function (k) {
+        return Array.isArray(detail[k]) && /Inventory$/i.test(k);
+      });
+
+      if (inventoryKeys.length) {
+        inventoryKeys.forEach(function (invKey) {
+          var invArr = detail[invKey] || [];
+          invArr.forEach(function (inv) {
+            var invStart = parseInt(inv.startTime || dateStart, 10);
+            var invEnd = parseInt(inv.endTime || dateEnd, 10);
+            var invCost = Number(inv.spending || 0);
+            var row = {
+              json: {
+                billing_date: billingDate,
+                account_id: accountUuid,
+                resource_id: resourceId,
+                resource_name: resourceName,
+                spending_type: spendingType,
+                resource_type: resourceType,
+                inventory_type: invKey,
+                cost: invCost,
+                date_start_ms: invStart,
+                date_end_ms: invEnd,
+                collected_at: new Date().toISOString(),
+              },
+            };
+            rowsBatch.push(row);
+          });
+        });
+      } else {
+        // Fallback: no specific inventory arrays, use detail.spending and group-level start/end
+        var cost = Number(detail.spending || sp.spending || 0);
+        var row = {
+          json: {
+            billing_date: billingDate,
+            account_id: accountUuid,
+            resource_id: resourceId,
+            resource_name: resourceName,
+            spending_type: spendingType,
+            resource_type: resourceType,
+            inventory_type: null,
+            cost: cost,
+            date_start_ms: dateStart,
+            date_end_ms: dateEnd,
+            raw_json: JSON.stringify(detail),
+            collected_at: new Date().toISOString(),
+          },
+        };
+        rowsBatch.push(row);
+      }
     });
   });
 
@@ -453,6 +488,7 @@ function testInsertToBQ() {
         resource_name: "test-resource-name",
         spending_type: "VM",
         resource_type: "VM",
+        inventory_type: "cpuInventory",
         cost: 0.01,
         date_start_ms: Date.now(),
         date_end_ms: Date.now(),
@@ -503,6 +539,7 @@ function ensureBQTable(projectId, datasetId, tableId) {
           { name: "resource_name", type: "STRING" },
           { name: "spending_type", type: "STRING" },
           { name: "resource_type", type: "STRING" },
+          { name: "inventory_type", type: "STRING" },
           { name: "cost", type: "FLOAT" },
           { name: "date_start_ms", type: "INTEGER" },
           { name: "date_end_ms", type: "INTEGER" },
