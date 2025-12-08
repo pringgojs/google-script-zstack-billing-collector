@@ -1,0 +1,20 @@
+{
+  "schema": {
+    "inventories[1]": "org.zstack.billing.table.AccountPriceTableRefInventory",
+    "inventories[0]": "org.zstack.billing.table.AccountPriceTableRefInventory"
+  },
+  "inventories": [
+    {
+      "accountUuid": "36c27e8ff05c4780bf6d2fa65700f22e",
+      "tableUuid": "877b7ed376034ea2b5e2f58042be48dd",
+      "createDate": "Nov 10, 2025 2:01:59 PM",
+      "lastOpDate": "Nov 10, 2025 2:01:59 PM"
+    },
+    {
+      "accountUuid": "78ef78eb1eec40f98a024d1e4bd7320a",
+      "tableUuid": "877b7ed376034ea2b5e2f58042be48dd",
+      "createDate": "Nov 10, 2025 3:31:30 PM",
+      "lastOpDate": "Nov 10, 2025 3:31:30 PM"
+    }
+  ]
+}

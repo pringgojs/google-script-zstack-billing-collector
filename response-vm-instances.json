@@ -1,0 +1,222 @@
+{
+  "schema": {
+    "inventories[1]": "org.zstack.header.vm.VmInstanceInventory",
+    "inventories[1].vmCdRoms[0]": "org.zstack.header.vm.cdrom.VmCdRomInventory",
+    "inventories[1].allVolumes[0]": "org.zstack.header.volume.VolumeInventory",
+    "inventories[1].vmNics[0]": "org.zstack.header.vm.VmNicInventory",
+    "inventories[1].vmNics[0].usedIps[0]": "org.zstack.header.network.l3.UsedIpInventory",
+    "inventories[0]": "org.zstack.header.vm.VmInstanceInventory",
+    "inventories[0].vmCdRoms[0]": "org.zstack.header.vm.cdrom.VmCdRomInventory",
+    "inventories[0].allVolumes[1]": "org.zstack.header.volume.VolumeInventory",
+    "inventories[0].allVolumes[0]": "org.zstack.header.volume.VolumeInventory",
+    "inventories[0].vmNics[0]": "org.zstack.header.vm.VmNicInventory",
+    "inventories[0].vmNics[0].usedIps[0]": "org.zstack.header.network.l3.UsedIpInventory"
+  },
+  "inventories": [
+    {
+      "uuid": "1d83187cffe44bcd92068d87402dbaa1",
+      "name": "tesVM",
+      "description": "",
+      "zoneUuid": "5c94838fd6d14b99b3ab09ffeac5e573",
+      "clusterUuid": "edd38499da024e688daf5e834cdde6fd",
+      "imageUuid": "3492f5b1b88e4d1c9e0e0ef540681481",
+      "hostUuid": "99e91697523948afb0cd4a36c649add5",
+      "lastHostUuid": "99e91697523948afb0cd4a36c649add5",
+      "instanceOfferingUuid": "4d815b0b809c4d168482e0326eff1eca",
+      "rootVolumeUuid": "bcdd17649b024a81aaabe2bc81c03cf9",
+      "platform": "Linux",
+      "architecture": "x86_64",
+      "defaultL3NetworkUuid": "a40809b42a7f499199cb755dce36d428",
+      "type": "UserVm",
+      "hypervisorType": "KVM",
+      "memorySize": 1073741824,
+      "cpuNum": 1,
+      "cpuSpeed": 0,
+      "allocatorStrategy": "MinimumCPUUsageHostAllocatorStrategy",
+      "createDate": "Nov 7, 2025 9:32:12 AM",
+      "lastOpDate": "Nov 24, 2025 3:22:52 PM",
+      "state": "Running",
+      "vmNics": [
+        {
+          "uuid": "b22a4f5796fc4ee8bb65b248be051fca",
+          "vmInstanceUuid": "1d83187cffe44bcd92068d87402dbaa1",
+          "usedIpUuid": "4da0d84ab69a3f268a6765889ca7e432",
+          "l3NetworkUuid": "a40809b42a7f499199cb755dce36d428",
+          "ip": "172.16.1.2",
+          "mac": "fa:dc:01:ad:2e:00",
+          "hypervisorType": "KVM",
+          "netmask": "255.255.255.0",
+          "gateway": "172.16.1.1",
+          "driverType": "virtio",
+          "usedIps": [
+            {
+              "uuid": "4da0d84ab69a3f268a6765889ca7e432",
+              "ipRangeUuid": "e7293e5259804fb8ae7958ae15d3067c",
+              "l3NetworkUuid": "a40809b42a7f499199cb755dce36d428",
+              "ipVersion": 4,
+              "ip": "172.16.1.2",
+              "netmask": "255.255.255.0",
+              "gateway": "172.16.1.1",
+              "ipInLong": 2886729986,
+              "vmNicUuid": "b22a4f5796fc4ee8bb65b248be051fca",
+              "createDate": "Nov 7, 2025 9:32:14 AM",
+              "lastOpDate": "Nov 7, 2025 9:32:14 AM"
+            }
+          ],
+          "internalName": "vnic1.0",
+          "deviceId": 0,
+          "type": "VNIC",
+          "state": "enable",
+          "createDate": "Nov 7, 2025 9:32:14 AM",
+          "lastOpDate": "Nov 7, 2025 9:32:14 AM"
+        }
+      ],
+      "allVolumes": [
+        {
+          "uuid": "bcdd17649b024a81aaabe2bc81c03cf9",
+          "name": "ROOT-for-tesVM",
+          "description": "Root volume for VM[uuid:1d83187cffe44bcd92068d87402dbaa1]",
+          "primaryStorageUuid": "4449dfd2347b4a29a8a334b76e6d1ba4",
+          "vmInstanceUuid": "1d83187cffe44bcd92068d87402dbaa1",
+          "diskOfferingUuid": "ee54bd03c77e412899509ffd09aff6b9",
+          "rootImageUuid": "3492f5b1b88e4d1c9e0e0ef540681481",
+          "installPath": "/cloud_ps/rootVolumes/acct-36c27e8ff05c4780bf6d2fa65700f22e/vol-bcdd17649b024a81aaabe2bc81c03cf9/bcdd17649b024a81aaabe2bc81c03cf9.qcow2",
+          "type": "Root",
+          "format": "qcow2",
+          "size": 21474836480,
+          "actualSize": 16781312,
+          "deviceId": 0,
+          "state": "Enabled",
+          "status": "Ready",
+          "createDate": "Nov 7, 2025 9:32:14 AM",
+          "lastOpDate": "Nov 7, 2025 9:45:39 AM",
+          "isShareable": false,
+          "lastAttachDate": "Nov 7, 2025 9:32:15 AM"
+        },
+        {
+          "uuid": "e5047af013db49a58d62c34e544c560b",
+          "name": "DATA-for-tesVM",
+          "description": "DataVolume-1d83187cffe44bcd92068d87402dbaa1",
+          "primaryStorageUuid": "4449dfd2347b4a29a8a334b76e6d1ba4",
+          "vmInstanceUuid": "1d83187cffe44bcd92068d87402dbaa1",
+          "diskOfferingUuid": "ee54bd03c77e412899509ffd09aff6b9",
+          "installPath": "/cloud_ps/dataVolumes/acct-36c27e8ff05c4780bf6d2fa65700f22e/vol-e5047af013db49a58d62c34e544c560b/e5047af013db49a58d62c34e544c560b.qcow2",
+          "type": "Data",
+          "format": "qcow2",
+          "size": 21474836480,
+          "actualSize": 6295552,
+          "deviceId": 1,
+          "state": "Enabled",
+          "status": "Ready",
+          "createDate": "Nov 7, 2025 9:32:14 AM",
+          "lastOpDate": "Nov 7, 2025 9:32:15 AM",
+          "isShareable": false,
+          "lastAttachDate": "Nov 7, 2025 9:32:15 AM"
+        }
+      ],
+      "vmCdRoms": [
+        {
+          "uuid": "91d3b9efb2e34906afcd10f15105763e",
+          "vmInstanceUuid": "1d83187cffe44bcd92068d87402dbaa1",
+          "deviceId": 0,
+          "name": "vm-1d83187cffe44bcd92068d87402dbaa1-cdRom",
+          "createDate": "Nov 7, 2025 9:32:14 AM",
+          "lastOpDate": "Nov 7, 2025 9:32:14 AM"
+        }
+      ],
+      "guestOsType": "Linux"
+    },
+    {
+      "uuid": "8a6fb6f044ad471dac1a9b62caecb616",
+      "name": "vmTest2",
+      "description": "",
+      "zoneUuid": "5c94838fd6d14b99b3ab09ffeac5e573",
+      "clusterUuid": "edd38499da024e688daf5e834cdde6fd",
+      "imageUuid": "3492f5b1b88e4d1c9e0e0ef540681481",
+      "lastHostUuid": "99e91697523948afb0cd4a36c649add5",
+      "instanceOfferingUuid": "4d815b0b809c4d168482e0326eff1eca",
+      "rootVolumeUuid": "f3763cfb47f94643b198168211617c5c",
+      "platform": "Linux",
+      "architecture": "x86_64",
+      "defaultL3NetworkUuid": "a40809b42a7f499199cb755dce36d428",
+      "type": "UserVm",
+      "hypervisorType": "KVM",
+      "memorySize": 1073741824,
+      "cpuNum": 1,
+      "cpuSpeed": 0,
+      "allocatorStrategy": "MinimumCPUUsageHostAllocatorStrategy",
+      "createDate": "Nov 10, 2025 3:47:01 PM",
+      "lastOpDate": "Nov 24, 2025 3:22:08 PM",
+      "state": "Stopped",
+      "vmNics": [
+        {
+          "uuid": "295a9adc8e07456c8181557fb8b73e18",
+          "vmInstanceUuid": "8a6fb6f044ad471dac1a9b62caecb616",
+          "usedIpUuid": "4ba289e1522932a8ac175e6bb78a54a9",
+          "l3NetworkUuid": "a40809b42a7f499199cb755dce36d428",
+          "ip": "172.16.1.3",
+          "mac": "fa:db:ad:de:81:00",
+          "hypervisorType": "KVM",
+          "netmask": "255.255.255.0",
+          "gateway": "172.16.1.1",
+          "driverType": "virtio",
+          "usedIps": [
+            {
+              "uuid": "4ba289e1522932a8ac175e6bb78a54a9",
+              "ipRangeUuid": "e7293e5259804fb8ae7958ae15d3067c",
+              "l3NetworkUuid": "a40809b42a7f499199cb755dce36d428",
+              "ipVersion": 4,
+              "ip": "172.16.1.3",
+              "netmask": "255.255.255.0",
+              "gateway": "172.16.1.1",
+              "ipInLong": 2886729987,
+              "vmNicUuid": "295a9adc8e07456c8181557fb8b73e18",
+              "createDate": "Nov 10, 2025 3:47:02 PM",
+              "lastOpDate": "Nov 10, 2025 3:47:02 PM"
+            }
+          ],
+          "internalName": "vnic2.0",
+          "deviceId": 0,
+          "type": "VNIC",
+          "state": "enable",
+          "createDate": "Nov 10, 2025 3:47:02 PM",
+          "lastOpDate": "Nov 10, 2025 3:47:02 PM"
+        }
+      ],
+      "allVolumes": [
+        {
+          "uuid": "f3763cfb47f94643b198168211617c5c",
+          "name": "ROOT-for-vmTest2",
+          "description": "Root volume for VM[uuid:8a6fb6f044ad471dac1a9b62caecb616]",
+          "primaryStorageUuid": "4449dfd2347b4a29a8a334b76e6d1ba4",
+          "vmInstanceUuid": "8a6fb6f044ad471dac1a9b62caecb616",
+          "diskOfferingUuid": "ee54bd03c77e412899509ffd09aff6b9",
+          "rootImageUuid": "3492f5b1b88e4d1c9e0e0ef540681481",
+          "installPath": "/cloud_ps/rootVolumes/acct-78ef78eb1eec40f98a024d1e4bd7320a/vol-f3763cfb47f94643b198168211617c5c/f3763cfb47f94643b198168211617c5c.qcow2",
+          "type": "Root",
+          "format": "qcow2",
+          "size": 21474836480,
+          "actualSize": 16781312,
+          "deviceId": 0,
+          "state": "Enabled",
+          "status": "Ready",
+          "createDate": "Nov 10, 2025 3:47:02 PM",
+          "lastOpDate": "Nov 10, 2025 4:45:39 PM",
+          "isShareable": false,
+          "lastAttachDate": "Nov 10, 2025 3:47:02 PM"
+        }
+      ],
+      "vmCdRoms": [
+        {
+          "uuid": "3e0dcd66780448a39b3aed2e285422dc",
+          "vmInstanceUuid": "8a6fb6f044ad471dac1a9b62caecb616",
+          "deviceId": 0,
+          "name": "vm-8a6fb6f044ad471dac1a9b62caecb616-cdRom",
+          "createDate": "Nov 10, 2025 3:47:02 PM",
+          "lastOpDate": "Nov 10, 2025 3:47:02 PM"
+        }
+      ],
+      "guestOsType": "Linux"
+    }
+  ]
+}

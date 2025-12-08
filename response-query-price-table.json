@@ -1,0 +1,21 @@
+{
+  "schema": {
+    "inventories[1]": "org.zstack.billing.table.PriceTableInventory",
+    "inventories[0]": "org.zstack.billing.table.PriceTableInventory"
+  },
+  "inventories": [
+    {
+      "uuid": "12a087c058cc45d5bf80a605f17c0083",
+      "name": "global_default",
+      "createDate": "Sep 1, 2025 4:15:40 PM",
+      "lastOpDate": "Sep 1, 2025 4:15:40 PM"
+    },
+    {
+      "uuid": "877b7ed376034ea2b5e2f58042be48dd",
+      "name": "DummyPricelist",
+      "description": "pakai kurs ¥1 = IDR 2400",
+      "createDate": "Nov 7, 2025 9:27:52 AM",
+      "lastOpDate": "Dec 8, 2025 10:03:51 AM"
+    }
+  ]
+}

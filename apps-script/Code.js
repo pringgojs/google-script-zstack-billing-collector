@@ -69,6 +69,10 @@ function collectBillingForDate(dateStr) {
 
   ensureBQTable(projectId, datasetId, tableId);
 
+  var pricesByTable = null;
+  var vmMap = {};
+  var volumeToVm = {};
+
   // Build start/end at midnight in UTC+7 (Asia/Jakarta) and use epoch milliseconds (13 digits)
   var start = new Date(billingDate + "T00:00:00.000+07:00");
   var end = new Date(billingDate + "T23:59:59.999+07:00");
@@ -105,6 +109,22 @@ function collectBillingForDate(dateStr) {
       var basic = Utilities.base64Encode(username + ":" + password);
       headers.Authorization = "Basic " + basic;
     }
+  }
+
+  // Now that `base` and `headers` are available, fetch price/VM caches
+  try {
+    var tableUuid = fetchPriceTableUuid(base, headers, accountUuid);
+    if (tableUuid)
+      pricesByTable = fetchPricesForTable(base, headers, tableUuid);
+  } catch (e) {
+    Logger.log("Warning: failed to fetch prices: %s", e.toString());
+  }
+  try {
+    var vmFetch = fetchVmMaps(base, headers);
+    vmMap = vmFetch.vmMap || {};
+    volumeToVm = vmFetch.volumeToVm || {};
+  } catch (e) {
+    Logger.log("Warning: failed to fetch vm instances: %s", e.toString());
   }
 
   // ZStack expects milliseconds since epoch (integer) for this environment
@@ -168,6 +188,87 @@ function collectBillingForDate(dateStr) {
             var invStart = parseInt(inv.startTime || dateStart, 10);
             var invEnd = parseInt(inv.endTime || dateEnd, 10);
             var invCost = Number(inv.spending || 0);
+            // Determine applicable price (use price at invStart)
+            var priceEntry = null;
+            try {
+              priceEntry = findApplicablePrice(
+                pricesByTable,
+                resourceType,
+                spendingType,
+                invKey,
+                invStart
+              );
+            } catch (e) {
+              Logger.log("findApplicablePrice error: %s", e.toString());
+            }
+
+            var resourceUsed = null;
+            var resourceUnit = null;
+            if (priceEntry) {
+              // compute usage based on timeUnit and resourceUnit when possible
+              var timeUnit = priceEntry.timeUnit || null;
+              var resUnit = priceEntry.resourceUnit || null;
+              try {
+                if (timeUnit === "HOURS") {
+                  var hours = (invEnd - invStart) / 3600000.0;
+                  if (priceEntry.resourceName === "cpu") {
+                    var vm = vmMap[resourceId] || null;
+                    var cpuCount = vm && vm.cpuNum ? Number(vm.cpuNum) : 1;
+                    resourceUsed = hours * cpuCount;
+                    resourceUnit = "vCPU-hour";
+                  } else if (resUnit === "GIGABYTE") {
+                    // find size in bytes
+                    var sizeBytes =
+                      inv.volumeSize || inv.volumeSizeInBytes || null;
+                    if (!sizeBytes) {
+                      // try volumeToVm lookup (volume -> vm -> size)
+                      var vmUuid = volumeToVm[resourceId] || null;
+                      if (
+                        vmUuid &&
+                        vmMap[vmUuid] &&
+                        vmMap[vmUuid].volumesMap &&
+                        vmMap[vmUuid].volumesMap[resourceId]
+                      ) {
+                        sizeBytes =
+                          vmMap[vmUuid].volumesMap[resourceId].size || null;
+                      }
+                    }
+                    if (sizeBytes) {
+                      var gb = Number(sizeBytes) / (1024 * 1024 * 1024);
+                      resourceUsed = hours * gb;
+                      resourceUnit = "GB-hour";
+                    } else {
+                      // fallback to cost/price
+                      resourceUsed = priceEntry.price
+                        ? invCost / Number(priceEntry.price)
+                        : null;
+                      resourceUnit = resUnit || null;
+                    }
+                  } else {
+                    // generic HOURS-based resource: fallback to cost/price
+                    resourceUsed = priceEntry.price
+                      ? invCost / Number(priceEntry.price)
+                      : null;
+                    resourceUnit = resUnit || null;
+                  }
+                } else {
+                  // fallback: compute by dividing cost by price
+                  resourceUsed = priceEntry.price
+                    ? invCost / Number(priceEntry.price)
+                    : null;
+                  resourceUnit = priceEntry.resourceUnit || null;
+                }
+              } catch (e) {
+                Logger.log("compute resource_used error: %s", e.toString());
+                resourceUsed = null;
+                resourceUnit = null;
+              }
+            } else {
+              // price not found -> keep null per requirement
+              resourceUsed = null;
+              resourceUnit = null;
+            }
+
             var row = {
               json: {
                 billing_date: billingDate,
@@ -177,6 +278,8 @@ function collectBillingForDate(dateStr) {
                 spending_type: spendingType,
                 resource_type: resourceType,
                 inventory_type: invKey,
+                resource_used: resourceUsed,
+                resource_unit: resourceUnit,
                 cost: invCost,
                 date_start_ms: invStart,
                 date_end_ms: invEnd,
@@ -453,6 +556,171 @@ function getBQTableSchema(projectId, datasetId, tableId) {
 }
 
 /**
+ * Fetch price table UUID for an account (cached in-memory)
+ */
+function getZstackUrl(baseUrl, subpath) {
+  // ensure baseUrl has no trailing slash
+  var base = baseUrl.replace(/\/$/, "");
+  if (!subpath) return base;
+  // if subpath already contains /zstack/v1, use as-is
+  if (subpath.indexOf("/zstack/v1") === 0) return base + subpath;
+  return (
+    base + "/zstack/v1" + (subpath.indexOf("/") === 0 ? subpath : "/" + subpath)
+  );
+}
+
+/**
+ * Fetch price table UUID for an account (cached in-memory)
+ */
+function fetchPriceTableUuid(baseUrl, headers, accountUuid) {
+  if (!accountUuid) return null;
+  if (ZSTACK_CACHE.priceTable && ZSTACK_CACHE.priceTable[accountUuid])
+    return ZSTACK_CACHE.priceTable[accountUuid];
+  var url = getZstackUrl(baseUrl, "/accounts/price-tables/refs");
+  var resp = UrlFetchApp.fetch(url, {
+    method: "get",
+    headers: headers,
+    muteHttpExceptions: true,
+  });
+  if (resp.getResponseCode() >= 400) {
+    throw new Error("price table refs fetch failed: " + resp.getContentText());
+  }
+  var obj = JSON.parse(resp.getContentText());
+  var inventories = obj.inventories || [];
+  var found = null;
+  for (var i = 0; i < inventories.length; i++) {
+    var inv = inventories[i];
+    if (inv.accountUuid === accountUuid) {
+      found = inv.tableUuid;
+      break;
+    }
+  }
+  ZSTACK_CACHE.priceTable = ZSTACK_CACHE.priceTable || {};
+  ZSTACK_CACHE.priceTable[accountUuid] = found;
+  return found;
+}
+
+/**
+ * Fetch prices and filter for tableUuid. Returns array of price inventories.
+ */
+function fetchPricesForTable(baseUrl, headers, tableUuid) {
+  if (!tableUuid) return null;
+  ZSTACK_CACHE.pricesByTable = ZSTACK_CACHE.pricesByTable || {};
+  if (ZSTACK_CACHE.pricesByTable[tableUuid])
+    return ZSTACK_CACHE.pricesByTable[tableUuid];
+  var url = getZstackUrl(baseUrl, "/billings/prices");
+  var resp = UrlFetchApp.fetch(url, {
+    method: "get",
+    headers: headers,
+    muteHttpExceptions: true,
+  });
+  if (resp.getResponseCode() >= 400) {
+    throw new Error("prices fetch failed: " + resp.getContentText());
+  }
+  var obj = JSON.parse(resp.getContentText());
+  var inv = obj.inventories || [];
+  var filtered = inv.filter(function (p) {
+    return p.tableUuid === tableUuid;
+  });
+  ZSTACK_CACHE.pricesByTable[tableUuid] = filtered;
+  return filtered;
+}
+
+/**
+ * Fetch VM instances and build vmMap and volumeToVm mapping.
+ */
+function fetchVmMaps(baseUrl, headers) {
+  ZSTACK_CACHE.vmMap = ZSTACK_CACHE.vmMap || null;
+  if (ZSTACK_CACHE.vmMap && ZSTACK_CACHE.volumeToVm) {
+    return { vmMap: ZSTACK_CACHE.vmMap, volumeToVm: ZSTACK_CACHE.volumeToVm };
+  }
+  var url = getZstackUrl(baseUrl, "/vm-instances");
+  var resp = UrlFetchApp.fetch(url, {
+    method: "get",
+    headers: headers,
+    muteHttpExceptions: true,
+  });
+  if (resp.getResponseCode() >= 400) {
+    throw new Error("vm instances fetch failed: " + resp.getContentText());
+  }
+  var obj = JSON.parse(resp.getContentText());
+  var inv = obj.inventories || [];
+  var vmMap = {};
+  var volumeToVm = {};
+  for (var i = 0; i < inv.length; i++) {
+    var v = inv[i];
+    var vm = {
+      cpuNum: v.cpuNum || 0,
+      memorySize: v.memorySize || 0,
+      volumesMap: {},
+    };
+    if (v.allVolumes && Array.isArray(v.allVolumes)) {
+      for (var j = 0; j < v.allVolumes.length; j++) {
+        var vol = v.allVolumes[j];
+        vm.volumesMap[vol.uuid] = vol;
+        volumeToVm[vol.uuid] = v.uuid;
+      }
+    }
+    vmMap[v.uuid] = vm;
+  }
+  ZSTACK_CACHE.vmMap = vmMap;
+  ZSTACK_CACHE.volumeToVm = volumeToVm;
+  return { vmMap: vmMap, volumeToVm: volumeToVm };
+}
+
+/**
+ * Find applicable price entry for a resource at timestamp (use price at startTime).
+ * Tries to match resourceType/resourceName and falls back to invKey mapping.
+ */
+function findApplicablePrice(
+  pricesArray,
+  resourceType,
+  spendingType,
+  invKey,
+  timestampMs
+) {
+  if (!pricesArray || !Array.isArray(pricesArray)) return null;
+  timestampMs = Number(timestampMs) || 0;
+  // Candidates in order: resourceType, spendingType, invKey->mapping
+  var candidates = [];
+  if (resourceType) candidates.push(resourceType);
+  if (spendingType) candidates.push(spendingType);
+  // map inventory key to likely resourceName
+  var invMap = {
+    sizeInventory: "dataVolume",
+    cpuInventory: "cpu",
+    memoryInventory: "memory",
+  };
+  if (invKey && invMap[invKey]) candidates.push(invMap[invKey]);
+
+  // search prices for candidate.resourceName match and dateInLong <= timestamp < endDateInLong (or no endDateInLong)
+  var matched = null;
+  for (var c = 0; c < candidates.length; c++) {
+    var cand = candidates[c];
+    // find all prices where resourceName equals cand
+    var list = pricesArray.filter(function (p) {
+      return p.resourceName === cand;
+    });
+    if (list.length === 0) continue;
+    // find the price with the latest dateInLong <= timestamp
+    var best = null;
+    for (var i = 0; i < list.length; i++) {
+      var p = list[i];
+      var start = p.dateInLong ? Number(p.dateInLong) : 0;
+      var end = p.endDateInLong ? Number(p.endDateInLong) : null;
+      if (start <= timestampMs && (end === null || timestampMs < end)) {
+        if (!best || start > (best.dateInLong || 0)) best = p;
+      }
+    }
+    if (best) {
+      matched = best;
+      break;
+    }
+  }
+  return matched;
+}
+
+/**
  * Test inserting a single sample row into configured BQ table.
  * Use Script Properties: BQ_PROJECT, BQ_DATASET, BQ_TABLE
  */
@@ -489,6 +757,8 @@ function testInsertToBQ() {
         spending_type: "VM",
         resource_type: "VM",
         inventory_type: "cpuInventory",
+        resource_used: 0.01,
+        resource_unit: "vCPU-hour",
         cost: 0.01,
         date_start_ms: Date.now(),
         date_end_ms: Date.now(),
@@ -540,6 +810,8 @@ function ensureBQTable(projectId, datasetId, tableId) {
           { name: "spending_type", type: "STRING" },
           { name: "resource_type", type: "STRING" },
           { name: "inventory_type", type: "STRING" },
+          { name: "resource_used", type: "FLOAT" },
+          { name: "resource_unit", type: "STRING" },
           { name: "cost", type: "FLOAT" },
           { name: "date_start_ms", type: "INTEGER" },
           { name: "date_end_ms", type: "INTEGER" },
