@@ -204,6 +204,28 @@ function collectBillingForDate(dateStr) {
 
             var resourceUsed = null;
             var resourceUnit = null;
+            // determine vm info (cpu_core and memory) from vmMap/volumeToVm
+            var vmUuidForResource = null;
+            if (
+              resourceType &&
+              typeof resourceType === "string" &&
+              resourceType.toLowerCase() === "vm"
+            ) {
+              vmUuidForResource = resourceId;
+            } else {
+              vmUuidForResource = volumeToVm[resourceId] || null;
+            }
+            var vmForResource = vmUuidForResource
+              ? vmMap[vmUuidForResource]
+              : null;
+            var cpuCoreVal =
+              vmForResource && vmForResource.cpuNum
+                ? vmForResource.cpuNum
+                : null;
+            var memoryVal =
+              vmForResource && vmForResource.memorySize
+                ? vmForResource.memorySize
+                : null;
             if (priceEntry) {
               // compute usage based on timeUnit and resourceUnit when possible
               var timeUnit = priceEntry.timeUnit || null;
@@ -277,6 +299,8 @@ function collectBillingForDate(dateStr) {
                 resource_name: resourceName,
                 spending_type: spendingType,
                 resource_type: resourceType,
+                cpu_core: cpuCoreVal,
+                memory: memoryVal,
                 inventory_type: invKey,
                 resource_used: resourceUsed,
                 resource_unit: resourceUnit,
@@ -292,6 +316,25 @@ function collectBillingForDate(dateStr) {
       } else {
         // Fallback: no specific inventory arrays, use detail.spending and group-level start/end
         var cost = Number(detail.spending || sp.spending || 0);
+        // fallback: include cpu_core/memory and null resource_used/unit
+        var vmUuidForResource = null;
+        if (
+          resourceType &&
+          typeof resourceType === "string" &&
+          resourceType.toLowerCase() === "vm"
+        ) {
+          vmUuidForResource = resourceId;
+        } else {
+          vmUuidForResource = volumeToVm[resourceId] || null;
+        }
+        var vmForResource = vmUuidForResource ? vmMap[vmUuidForResource] : null;
+        var cpuCoreVal =
+          vmForResource && vmForResource.cpuNum ? vmForResource.cpuNum : null;
+        var memoryVal =
+          vmForResource && vmForResource.memorySize
+            ? vmForResource.memorySize
+            : null;
+
         var row = {
           json: {
             billing_date: billingDate,
@@ -300,7 +343,11 @@ function collectBillingForDate(dateStr) {
             resource_name: resourceName,
             spending_type: spendingType,
             resource_type: resourceType,
+            cpu_core: cpuCoreVal,
+            memory: memoryVal,
             inventory_type: null,
+            resource_used: null,
+            resource_unit: null,
             cost: cost,
             date_start_ms: dateStart,
             date_end_ms: dateEnd,
@@ -756,6 +803,8 @@ function testInsertToBQ() {
         resource_name: "test-resource-name",
         spending_type: "VM",
         resource_type: "VM",
+        cpu_core: 1,
+        memory: 1073741824,
         inventory_type: "cpuInventory",
         resource_used: 0.01,
         resource_unit: "vCPU-hour",
@@ -809,6 +858,8 @@ function ensureBQTable(projectId, datasetId, tableId) {
           { name: "resource_name", type: "STRING" },
           { name: "spending_type", type: "STRING" },
           { name: "resource_type", type: "STRING" },
+          { name: "cpu_core", type: "INTEGER" },
+          { name: "memory", type: "INTEGER" },
           { name: "inventory_type", type: "STRING" },
           { name: "resource_used", type: "FLOAT" },
           { name: "resource_unit", type: "STRING" },
