@@ -66,6 +66,8 @@ function collectBillingForDate(dateStr) {
 
   var billingDate = dateStr;
   var rowsBatch = [];
+  // simple dedupe map to avoid inserting duplicate rows (keyed by resource + inventory + times + cost)
+  var seenKeys = {};
 
   ensureBQTable(projectId, datasetId, tableId);
 
@@ -204,7 +206,7 @@ function collectBillingForDate(dateStr) {
 
             var resourceUsed = null;
             var resourceUnit = null;
-            // determine vm info (cpu_core and memory) from vmMap/volumeToVm
+            // determine vm info (cpu_core and memory) only for VM resources
             var vmUuidForResource = null;
             if (
               resourceType &&
@@ -218,14 +220,99 @@ function collectBillingForDate(dateStr) {
             var vmForResource = vmUuidForResource
               ? vmMap[vmUuidForResource]
               : null;
-            var cpuCoreVal =
-              vmForResource && vmForResource.cpuNum
+            var isVmResource =
+              resourceType && typeof resourceType === "string"
+                ? resourceType.toLowerCase() === "vm"
+                : false;
+            var cpuCoreVal = isVmResource
+              ? vmForResource && vmForResource.cpuNum
                 ? vmForResource.cpuNum
-                : null;
-            var memoryVal =
-              vmForResource && vmForResource.memorySize
+                : null
+              : null;
+            var memoryVal = isVmResource
+              ? vmForResource && vmForResource.memorySize
                 ? vmForResource.memorySize
-                : null;
+                : null
+              : null;
+
+            // populate size and actual_size only for volume inventories (if present)
+            var sizeVal = null;
+            var actualSizeVal = null;
+            // prefer inventory volume size/actualSize fields if provided
+            if (
+              inv.volumeSize ||
+              inv.volumeSizeInBytes ||
+              inv.size ||
+              inv.actualSize ||
+              inv.actualSizeInBytes ||
+              inv.actual_size
+            ) {
+              sizeVal =
+                inv.volumeSize || inv.volumeSizeInBytes || inv.size || null;
+              actualSizeVal =
+                inv.actualSize ||
+                inv.actualSizeInBytes ||
+                inv.actual_size ||
+                null;
+            } else {
+              // fallback: check vm's volumesMap for this volume
+              if (
+                vmForResource &&
+                vmForResource.volumesMap &&
+                vmForResource.volumesMap[resourceId]
+              ) {
+                var volEntry = vmForResource.volumesMap[resourceId];
+                sizeVal =
+                  volEntry.size ||
+                  volEntry.sizeInBytes ||
+                  volEntry.volumeSize ||
+                  volEntry.volumeSizeInBytes ||
+                  null;
+                actualSizeVal =
+                  volEntry.actualSize ||
+                  volEntry.actualSizeInBytes ||
+                  volEntry.actual_size ||
+                  volEntry.actual_size_in_bytes ||
+                  null;
+              } else {
+                // fallback: volumeToVm mapping may be missing; search vmMap for this volume
+                try {
+                  var foundVol = null;
+                  for (var _vmk in vmMap) {
+                    if (
+                      vmMap[_vmk] &&
+                      vmMap[_vmk].volumesMap &&
+                      vmMap[_vmk].volumesMap[resourceId]
+                    ) {
+                      foundVol = vmMap[_vmk].volumesMap[resourceId];
+                      break;
+                    }
+                  }
+                  if (foundVol) {
+                    sizeVal =
+                      foundVol.size ||
+                      foundVol.sizeInBytes ||
+                      foundVol.volumeSize ||
+                      foundVol.volumeSizeInBytes ||
+                      null;
+                    actualSizeVal =
+                      foundVol.actualSize ||
+                      foundVol.actualSizeInBytes ||
+                      foundVol.actual_size ||
+                      foundVol.actual_size_in_bytes ||
+                      null;
+                    Logger.log(
+                      "Found volume %s via vmMap fallback, size=%s actualSize=%s",
+                      resourceId,
+                      sizeVal,
+                      actualSizeVal
+                    );
+                  }
+                } catch (e) {
+                  Logger.log("vmMap fallback search error: %s", e.toString());
+                }
+              }
+            }
             if (priceEntry) {
               // compute usage based on timeUnit and resourceUnit when possible
               var timeUnit = priceEntry.timeUnit || null;
@@ -301,16 +388,35 @@ function collectBillingForDate(dateStr) {
                 resource_type: resourceType,
                 cpu_core: cpuCoreVal,
                 memory: memoryVal,
+                size: sizeVal,
+                actual_size: actualSizeVal,
                 inventory_type: invKey,
                 resource_used: resourceUsed,
                 resource_unit: resourceUnit,
                 cost: invCost,
                 date_start_ms: invStart,
                 date_end_ms: invEnd,
+                raw_json: JSON.stringify(inv),
                 collected_at: new Date().toISOString(),
               },
             };
-            rowsBatch.push(row);
+            // build a compact key to dedupe identical rows
+            try {
+              var k = [
+                accountUuid,
+                resourceId,
+                invKey || "",
+                String(invStart),
+                String(invEnd),
+                String(invCost),
+              ].join("|");
+            } catch (e) {
+              var k = Math.random().toString(36).slice(2);
+            }
+            if (!seenKeys[k]) {
+              seenKeys[k] = true;
+              rowsBatch.push(row);
+            }
           });
         });
       } else {
@@ -328,12 +434,82 @@ function collectBillingForDate(dateStr) {
           vmUuidForResource = volumeToVm[resourceId] || null;
         }
         var vmForResource = vmUuidForResource ? vmMap[vmUuidForResource] : null;
-        var cpuCoreVal =
-          vmForResource && vmForResource.cpuNum ? vmForResource.cpuNum : null;
-        var memoryVal =
-          vmForResource && vmForResource.memorySize
+        var isVmResource =
+          resourceType && typeof resourceType === "string"
+            ? resourceType.toLowerCase() === "vm"
+            : false;
+        var cpuCoreVal = isVmResource
+          ? vmForResource && vmForResource.cpuNum
+            ? vmForResource.cpuNum
+            : null
+          : null;
+        var memoryVal = isVmResource
+          ? vmForResource && vmForResource.memorySize
             ? vmForResource.memorySize
-            : null;
+            : null
+          : null;
+
+        var sizeVal = null;
+        var actualSizeVal = null;
+        if (
+          vmForResource &&
+          vmForResource.volumesMap &&
+          vmForResource.volumesMap[resourceId]
+        ) {
+          var volEntry = vmForResource.volumesMap[resourceId];
+          sizeVal =
+            volEntry.size ||
+            volEntry.sizeInBytes ||
+            volEntry.volumeSize ||
+            volEntry.volumeSizeInBytes ||
+            null;
+          actualSizeVal =
+            volEntry.actualSize ||
+            volEntry.actualSizeInBytes ||
+            volEntry.actual_size ||
+            volEntry.actual_size_in_bytes ||
+            null;
+        } else {
+          // fallback: search entire vmMap for this volume id
+          try {
+            var foundVol2 = null;
+            for (var _k2 in vmMap) {
+              if (
+                vmMap[_k2] &&
+                vmMap[_k2].volumesMap &&
+                vmMap[_k2].volumesMap[resourceId]
+              ) {
+                foundVol2 = vmMap[_k2].volumesMap[resourceId];
+                break;
+              }
+            }
+            if (foundVol2) {
+              sizeVal =
+                foundVol2.size ||
+                foundVol2.sizeInBytes ||
+                foundVol2.volumeSize ||
+                foundVol2.volumeSizeInBytes ||
+                null;
+              actualSizeVal =
+                foundVol2.actualSize ||
+                foundVol2.actualSizeInBytes ||
+                foundVol2.actual_size ||
+                foundVol2.actual_size_in_bytes ||
+                null;
+              Logger.log(
+                "Fallback vmMap found volume %s size=%s actualSize=%s",
+                resourceId,
+                sizeVal,
+                actualSizeVal
+              );
+            }
+          } catch (e) {
+            Logger.log(
+              "vmMap fallback search error (fallback branch): %s",
+              e.toString()
+            );
+          }
+        }
 
         var row = {
           json: {
@@ -345,6 +521,8 @@ function collectBillingForDate(dateStr) {
             resource_type: resourceType,
             cpu_core: cpuCoreVal,
             memory: memoryVal,
+            size: sizeVal,
+            actual_size: actualSizeVal,
             inventory_type: null,
             resource_used: null,
             resource_unit: null,
@@ -355,7 +533,22 @@ function collectBillingForDate(dateStr) {
             collected_at: new Date().toISOString(),
           },
         };
-        rowsBatch.push(row);
+        try {
+          var k2 = [
+            accountUuid,
+            resourceId,
+            "detail",
+            String(dateStart),
+            String(dateEnd),
+            String(cost),
+          ].join("|");
+        } catch (e) {
+          var k2 = Math.random().toString(36).slice(2);
+        }
+        if (!seenKeys[k2]) {
+          seenKeys[k2] = true;
+          rowsBatch.push(row);
+        }
       }
     });
   });
@@ -860,6 +1053,8 @@ function ensureBQTable(projectId, datasetId, tableId) {
           { name: "resource_type", type: "STRING" },
           { name: "cpu_core", type: "INTEGER" },
           { name: "memory", type: "INTEGER" },
+          { name: "size", type: "INTEGER" },
+          { name: "actual_size", type: "INTEGER" },
           { name: "inventory_type", type: "STRING" },
           { name: "resource_used", type: "FLOAT" },
           { name: "resource_unit", type: "STRING" },
@@ -1094,4 +1289,10 @@ function testZstackAuth() {
     Logger.log("testZstackAuth error: %s", e.toString());
     throw e;
   }
+}
+
+function testCollectBillingForDateStatic() {
+  date = "2025-12-09";
+  collectBillingForDate(date);
+  return;
 }
