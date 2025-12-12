@@ -415,6 +415,8 @@ function collectBillingForDate(dateStr) {
             }
             if (!seenKeys[k]) {
               seenKeys[k] = true;
+              // use stable insertId to help BigQuery de-duplicate streaming inserts
+              row.insertId = k;
               rowsBatch.push(row);
             }
           });
@@ -547,6 +549,7 @@ function collectBillingForDate(dateStr) {
         }
         if (!seenKeys[k2]) {
           seenKeys[k2] = true;
+          row.insertId = k2;
           rowsBatch.push(row);
         }
       }
@@ -669,14 +672,38 @@ function deleteRowsForDate(projectId, datasetId, tableId, billingDate) {
     "'";
   Logger.log("Running delete query: %s", sql);
   var req = { query: sql, useLegacySql: false };
-  var resp = BigQuery.Jobs.query(req, projectId);
-  if (resp && resp.errorResult) {
-    throw new Error(
-      "BigQuery delete error: " + JSON.stringify(resp.errorResult)
-    );
+
+  var maxRetries = 6;
+  for (var attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      var resp = BigQuery.Jobs.query(req, projectId);
+      if (resp && resp.errorResult) {
+        throw new Error(JSON.stringify(resp.errorResult));
+      }
+      Logger.log("Delete job result: %s", JSON.stringify(resp || {}));
+      return resp;
+    } catch (e) {
+      var msg = e && e.message ? e.message : e.toString();
+      Logger.log("deleteRowsForDate attempt %s failed: %s", attempt, msg);
+      // If error mentions streaming buffer, wait and retry
+      if (/streaming buffer/i.test(msg) || /streamingbuffer/i.test(msg)) {
+        if (attempt >= maxRetries) {
+          // give up and surface warning to caller
+          throw new Error(
+            "BigQuery delete error (streaming buffer present after retries): " +
+              msg
+          );
+        }
+        // sleep 30s before retrying
+        Utilities.sleep(30000);
+        continue;
+      }
+      // non-retryable error: rethrow
+      throw e;
+    }
   }
-  Logger.log("Delete job result: %s", JSON.stringify(resp || {}));
-  return resp;
+  // unreachable
+  throw new Error("deleteRowsForDate: unexpected exit");
 }
 
 /**
